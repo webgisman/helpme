@@ -8,7 +8,9 @@ package proto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -34,6 +36,16 @@ const (
 	MsgAck       = 13 // seq (uint32 LE)
 	MsgBye       = 14 // the helper ends the session
 	MsgText      = 15 // UTF-8 text (phone keyboards)
+	MsgClipboard = 16 // UTF-8 text, both directions
+	MsgMonitor   = 17 // viewer selects a display: index u8
+)
+
+// Short-code handshake (SPAKE2), sent in clear before the session key exists.
+const (
+	PakeA    = 0xF1 // host -> viewer: A's point
+	PakeB    = 0xF2 // viewer -> host: B's point + B's confirmation
+	PakeOK   = 0xF3 // host -> viewer: A's confirmation
+	PakeFail = 0xF4 // host -> viewer: wrong code
 )
 
 // Mouse actions (MsgMouse).
@@ -147,4 +159,61 @@ func Cursor(x, y int) []byte {
 	binary.LittleEndian.PutUint16(b[1:], uint16(x))
 	binary.LittleEndian.PutUint16(b[3:], uint16(y))
 	return b
+}
+
+// Help channels. A helper's channel is "<id>.<public key>": HelpMe.exe encrypts help requests to that
+// P-256 public key (ECIES: ephemeral ECDH + AES-128-GCM), so the download link or config file that
+// carries it can send requests but never read them. Only the helper's page holds the private key.
+
+// ParseChannel splits "<id>.<base64url uncompressed P-256 public key>".
+func ParseChannel(s string) (id string, pub *ecdh.PublicKey, err error) {
+	parts := strings.Split(strings.TrimSpace(s), ".")
+	if len(parts) != 2 || !ValidRoom(parts[0]) {
+		return "", nil, errors.New("invalid channel")
+	}
+	raw, err := b64.DecodeString(parts[1])
+	if err != nil {
+		return "", nil, errors.New("invalid channel key")
+	}
+	pub, err = ecdh.P256().NewPublicKey(raw)
+	if err != nil {
+		return "", nil, errors.New("invalid channel key")
+	}
+	return parts[0], pub, nil
+}
+
+// SealToChannel returns ephemeral public key (65) || nonce (12) || ciphertext.
+func SealToChannel(pub *ecdh.PublicKey, plain []byte) ([]byte, error) {
+	eph, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	shared, err := eph.ECDH(pub)
+	if err != nil {
+		return nil, err
+	}
+	k := sha256.Sum256(append([]byte("helpme-channel-v1"), shared...))
+	c, err := NewCipher(k[:16])
+	if err != nil {
+		return nil, err
+	}
+	return append(eph.PublicKey().Bytes(), c.Seal(plain)...), nil
+}
+
+// OpenFromChannel is the inverse of SealToChannel (used by tests; the helper's page does it in JS).
+func OpenFromChannel(priv *ecdh.PrivateKey, msg []byte) ([]byte, error) {
+	if len(msg) < 65+12+16 {
+		return nil, errors.New("message too short")
+	}
+	eph, err := ecdh.P256().NewPublicKey(msg[:65])
+	if err != nil {
+		return nil, err
+	}
+	shared, err := priv.ECDH(eph)
+	if err != nil {
+		return nil, err
+	}
+	k := sha256.Sum256(append([]byte("helpme-channel-v1"), shared...))
+	c, _ := NewCipher(k[:16])
+	return c.Open(msg[65:])
 }

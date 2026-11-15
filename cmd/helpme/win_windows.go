@@ -107,18 +107,18 @@ func copyToClipboard(s string) bool {
 // ---------------------------------------------------------------- GDI capture
 
 type capturer struct {
-	w, h                 int
+	x, y, w, h           int // monitor rectangle in virtual-screen coordinates
 	screenDC, memDC, bmp uintptr
 	old                  uintptr
 	bits                 []byte // BGRA, top-down
 }
 
-func newCapturer() (*capturer, error) {
-	w, h := screenSize()
+func newCapturer(m monitor) (*capturer, error) {
+	w, h := m.W, m.H
 	if w <= 0 || h <= 0 {
 		return nil, errors.New("no screen")
 	}
-	c := &capturer{w: w, h: h}
+	c := &capturer{x: m.X, y: m.Y, w: w, h: h}
 	c.screenDC, _, _ = pGetDC.Call(0)
 	c.memDC, _, _ = pCreateCompatibleDC.Call(c.screenDC)
 	var bmi [44]byte // BITMAPINFOHEADER (40) + 1 RGBQUAD
@@ -140,7 +140,7 @@ func newCapturer() (*capturer, error) {
 
 func (c *capturer) grab() error {
 	const srccopy, captureblt = 0x00CC0020, 0x40000000
-	r, _, _ := pBitBlt.Call(c.memDC, 0, 0, uintptr(c.w), uintptr(c.h), c.screenDC, 0, 0, srccopy|captureblt)
+	r, _, _ := pBitBlt.Call(c.memDC, 0, 0, uintptr(c.w), uintptr(c.h), c.screenDC, uintptr(c.x), uintptr(c.y), srccopy|captureblt)
 	if r == 0 {
 		return errors.New("capture failed (locked screen?)")
 	}
@@ -195,15 +195,16 @@ func keyInput(scan uint16, flags uint32) (b [inputSize]byte) {
 }
 
 const (
-	mouseMove       = 0x0001
-	mouseLeftDown   = 0x0002
-	mouseLeftUp     = 0x0004
-	mouseRightDown  = 0x0008
-	mouseRightUp    = 0x0010
-	mouseMiddleDown = 0x0020
-	mouseMiddleUp   = 0x0040
-	mouseWheel      = 0x0800
-	mouseAbsolute   = 0x8000
+	mouseMove        = 0x0001
+	mouseLeftDown    = 0x0002
+	mouseLeftUp      = 0x0004
+	mouseRightDown   = 0x0008
+	mouseRightUp     = 0x0010
+	mouseMiddleDown  = 0x0020
+	mouseMiddleUp    = 0x0040
+	mouseWheel       = 0x0800
+	mouseVirtualDesk = 0x4000
+	mouseAbsolute    = 0x8000
 
 	keyExtended = 0x0001
 	keyUp       = 0x0002
@@ -211,11 +212,12 @@ const (
 	keyScancode = 0x0008
 )
 
-// injectMouse: x, y in primary-monitor pixels.
-func injectMouse(action int, x, y, w, h int, delta int16) {
-	nx := int32(int64(x) * 65535 / int64(max(1, w-1)))
-	ny := int32(int64(y) * 65535 / int64(max(1, h-1)))
-	move := mouseInput(mouseMove|mouseAbsolute, nx, ny, 0)
+// injectMouse: x, y in pixels of monitor m.
+func injectMouse(action, x, y int, m monitor, delta int16) {
+	vx, vy, vw, vh := virtualScreen()
+	nx := int32(int64(x+m.X-vx) * 65535 / int64(max(1, vw-1)))
+	ny := int32(int64(y+m.Y-vy) * 65535 / int64(max(1, vh-1)))
+	move := mouseInput(mouseMove|mouseAbsolute|mouseVirtualDesk, nx, ny, 0)
 	var extra uint32
 	var data uint32
 	switch action {

@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -22,29 +23,50 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/webgisman/helpme/internal/proto"
+	"github.com/webgisman/helpme/internal/spake2"
 )
 
 func main() {
 	link := flag.String("link", "", "session link")
+	code := flag.String("code", "", "9-digit short code (instead of -link)")
 	out := flag.String("out", "screen.png", "output image")
 	frames := flag.Int("frames", 12, "frames to receive")
 	wiggle := flag.Bool("wiggle", false, "move the mouse in a small square at the centre")
 	flag.Parse()
-	i := strings.Index(*link, "#")
-	if i < 0 {
-		fmt.Println("link has no #")
-		os.Exit(2)
+	base := "wss://guxos.com"
+	var c *proto.Cipher
+	query := ""
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, *code)
+	if *code != "" {
+		if len(digits) != 9 {
+			fmt.Println("the code must have 9 digits")
+			os.Exit(2)
+		}
+		query = "code=" + digits[:4]
+	} else {
+		i := strings.Index(*link, "#")
+		if i < 0 {
+			fmt.Println("link has no #")
+			os.Exit(2)
+		}
+		room, key, err := proto.ParseFragment((*link)[i+1:])
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(2)
+		}
+		base = strings.Replace((*link)[:strings.Index(*link, "/helpme/")], "https://", "wss://", 1)
+		c, _ = proto.NewCipher(key)
+		query = "room=" + room
 	}
-	room, key, err := proto.ParseFragment((*link)[i+1:])
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(2)
-	}
-	base := strings.Replace((*link)[:strings.Index(*link, "/helpme/")], "https://", "wss://", 1)
-	c, _ := proto.NewCipher(key)
+	var pake *spake2.State
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, base+"/helpme/ws?role=view&room="+room,
+	conn, _, err := websocket.Dial(ctx, base+"/helpme/ws?role=view&"+query,
 		&websocket.DialOptions{HTTPHeader: http.Header{"Origin": {"https://guxos.com"}}})
 	if err != nil {
 		fmt.Println("connect:", err)
@@ -52,6 +74,12 @@ func main() {
 	}
 	conn.SetReadLimit(16 << 20)
 	send := func(b []byte) { conn.Write(ctx, websocket.MessageBinary, c.Seal(b)) }
+	var pendingKey, pendingExpected []byte
+	sendHello := func() {
+		hello, _ := json.Marshal(map[string]string{"name": "Claude (test)"})
+		send(append([]byte{proto.MsgViewHello}, hello...))
+		fmt.Println("request sent: waiting for consent…")
+	}
 	var canvas *image.RGBA
 	got, tiles, bytesIn, cursors := 0, 0, 0, 0
 
@@ -63,11 +91,42 @@ func main() {
 			break
 		}
 		if typ == websocket.MessageText {
-			if strings.Contains(string(data), "peer") {
-				hello, _ := json.Marshal(map[string]string{"name": "Claude (test)"})
-				send(append([]byte{proto.MsgViewHello}, hello...))
-				fmt.Println("connected to the relay, request sent: waiting for consent…")
+			var p struct{ T, Mode, Room string }
+			json.Unmarshal(data, &p)
+			if p.T == "peer" && p.Mode == "code" {
+				pake, _, _ = spake2.Start(spake2.B, p.Room, digits[4:])
+				fmt.Println("connected with the short code, running SPAKE2…")
+			} else if p.T == "peer" {
+				sendHello()
 			}
+			continue
+		}
+		if c == nil && pake != nil && len(data) == 66 && data[0] == proto.PakeA {
+			key, confirm, expected, err := pake.Finish(data[1:])
+			if err != nil {
+				fmt.Println("spake2:", err)
+				os.Exit(1)
+			}
+			msgB := pake.Message()
+			conn.Write(ctx, websocket.MessageBinary, append(append([]byte{proto.PakeB}, msgB...), confirm...))
+			pendingKey, pendingExpected = key, expected
+			continue
+		}
+		if c == nil && len(data) > 0 && data[0] == proto.PakeOK {
+			if !hmac.Equal(data[1:], pendingExpected) {
+				fmt.Println("host confirmation does not match!")
+				os.Exit(1)
+			}
+			c, _ = proto.NewCipher(pendingKey)
+			fmt.Println("SPAKE2 OK: session key agreed with the host")
+			sendHello()
+			continue
+		}
+		if c == nil && len(data) > 0 && data[0] == proto.PakeFail {
+			fmt.Println("wrong code")
+			os.Exit(1)
+		}
+		if c == nil {
 			continue
 		}
 		bytesIn += len(data)

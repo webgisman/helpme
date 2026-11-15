@@ -3,100 +3,143 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Guxos HelpMe — free, end-to-end encrypted remote help, nothing to install</title>
-<meta name="description" content="Help a friend or a customer on their Windows PC from any browser. Free, open source, end-to-end encrypted, explicit consent, nothing to install for the helper.">
+<title>Guxos HelpMe — free, end-to-end encrypted remote help</title>
+<meta name="description" content="Help someone on their Windows PC from any browser. Short code or link, end-to-end encrypted, explicit consent, nothing to install for the helper. Free and open source.">
 <link rel="canonical" href="https://guxos.com/helpme/">
 <meta name="theme-color" content="#0b1020">
 <meta property="og:title" content="Guxos HelpMe — remote help, end-to-end encrypted">
 <meta property="og:description" content="Help someone on their PC from any browser. Free, open source, nothing to install for the helper.">
 <meta property="og:url" content="https://guxos.com/helpme/">
 <style>
-:root{--bg:#0b1020;--card:#121a33;--fg:#e8ebf7;--muted:#a5adc6;--line:#243056;--accent:#6366f1;--accent2:#06b6d4;--ok:#22c55e;--bad:#f43f5e}
+:root{--bg:#0b1020;--card:#121a33;--fg:#e8ebf7;--muted:#a5adc6;--line:#243056;--accent:#6366f1;--accent2:#06b6d4;--ok:#22c55e;--bad:#f43f5e;--warn:#f59e0b}
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
-a{color:#a5b4fc}.wrap{max-width:980px;margin:0 auto;padding:0 18px}
+a{color:#a5b4fc}.wrap{max-width:980px;margin:0 auto;padding:0 18px}.hide{display:none!important}
 header{display:flex;justify-content:space-between;align-items:center;padding:16px 0}
-.brand{font-weight:800;letter-spacing:-.01em;text-decoration:none;color:var(--fg);font-size:1.15rem}.brand span{background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand{font-weight:800;text-decoration:none;color:var(--fg);font-size:1.15rem}.brand span{background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
 .lang{border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:5px 12px;cursor:pointer;font:inherit;font-size:.85rem}
-h1{font-size:clamp(1.8rem,4.5vw,2.8rem);line-height:1.15;margin:28px 0 12px;letter-spacing:-.02em}.lead{color:var(--muted);font-size:1.12rem;max-width:720px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:30px 0}@media(max-width:720px){.grid{grid-template-columns:1fr}}
+h1{font-size:clamp(1.8rem,4.5vw,2.7rem);line-height:1.15;margin:24px 0 12px;letter-spacing:-.02em}.lead{color:var(--muted);font-size:1.1rem;max-width:720px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:28px 0}@media(max-width:720px){.grid{grid-template-columns:1fr}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}.card h2{margin:0 0 8px;font-size:1.2rem}
 .btn{display:inline-block;border:0;border-radius:12px;padding:13px 22px;font:inherit;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2));cursor:pointer;text-decoration:none}
-.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)}.muted{color:var(--muted);font-size:.9rem}.small{font-size:.8rem;word-break:break-all}
+.btn:disabled{opacity:.5;cursor:default}.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)}.btn.small{padding:7px 14px;font-size:.9rem}
+.muted{color:var(--muted);font-size:.9rem}.small{font-size:.8rem;word-break:break-all}
+input.field{width:100%;font:inherit;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:#0e1530;color:var(--fg);margin:8px 0}
+input.code{font-size:1.6rem;letter-spacing:.18em;text-align:center;font-weight:700}
 ul.checks{list-style:none;padding:0}ul.checks li{padding:6px 0 6px 28px;position:relative}ul.checks li:before{content:"✓";position:absolute;left:4px;color:var(--accent2);font-weight:800}
 h3{margin:34px 0 8px}footer{border-top:1px solid var(--line);margin-top:44px;padding:22px 0 40px;color:var(--muted);font-size:.9rem}
-/* visualiseur */
-#viewer{display:none;position:fixed;inset:0;background:#05070f;flex-direction:column}
+pre{background:#0e1530;border:1px solid var(--line);border-radius:10px;padding:10px 12px;overflow-x:auto;font-size:.82rem;white-space:pre-wrap;word-break:break-all}
+.req{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0;background:var(--card)}
+.req.new{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(6,182,212,.2)}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--ok);margin-right:6px}
+.center{max-width:480px;margin:10vh auto;padding:0 18px;text-align:center}
+/* viewer */
+#viewer{position:fixed;inset:0;background:#05070f;flex-direction:column;display:flex}
 #bar{display:flex;gap:8px;align-items:center;padding:8px 10px;background:#0b1020;border-bottom:1px solid var(--line);flex-wrap:wrap}
-#bar .sp{flex:1}#bar button{border:1px solid var(--line);background:#121a33;color:var(--fg);border-radius:9px;padding:6px 12px;font:inherit;font-size:.88rem;cursor:pointer}
-#bar button.stop{background:var(--bad);border-color:var(--bad)}#state{font-size:.88rem;color:var(--muted)}
+#bar .sp{flex:1}#bar button,#bar select{border:1px solid var(--line);background:#121a33;color:var(--fg);border-radius:9px;padding:6px 12px;font:inherit;font-size:.88rem;cursor:pointer}
+#bar button.stop{background:var(--bad);border-color:var(--bad)}#bar button.hot{border-color:var(--accent2);color:#67e8f9}#state{font-size:.88rem;color:var(--muted)}
+#note{font-size:.8rem;color:var(--warn);padding:4px 12px;background:#120f05;display:none}
 #stage{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;outline:none}
-#wrapc{position:relative;line-height:0}#screen{max-width:100%;max-height:calc(100vh - 56px);display:block;background:#000;cursor:none;touch-action:none}
+#wrapc{position:relative;line-height:0}#screen{max-width:100%;max-height:calc(100vh - 60px);display:block;background:#000;cursor:none;touch-action:none}
 #cur{position:absolute;width:12px;height:12px;margin:-1px 0 0 -1px;pointer-events:none;border-left:2px solid #fff;border-top:2px solid #fff;filter:drop-shadow(0 0 1px #000);display:none}
-#join{max-width:440px;margin:12vh auto;padding:0 18px;text-align:center}#join input{width:100%;font:inherit;padding:13px 15px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);margin:14px 0}
 #kbd{position:absolute;opacity:0;width:1px;height:1px;left:-10px}
 </style>
 </head>
 <body>
-<div id="site">
-<div class="wrap">
-  <header><a class="brand" href="/">guxos <span>HelpMe</span></a><button class="lang" id="langbtn">FR · Français</button></header>
 
-  <h1 data-en="Help someone on their PC, from any browser" data-fr="Aidez quelqu'un sur son PC, depuis n'importe quel navigateur"></h1>
-  <p class="lead" data-en="The person who needs help runs a tiny program and sends you a link. You open it in your browser — on a PC, a Mac or a phone — and see their screen. Free, open source, end-to-end encrypted." data-fr="La personne qui a besoin d'aide lance un petit programme et vous envoie un lien. Vous l'ouvrez dans votre navigateur — sur PC, Mac ou téléphone — et vous voyez son écran. Gratuit, open source, chiffré de bout en bout."></p>
-
+<!-- landing -->
+<div id="site" class="hide"><div class="wrap">
+  <header><a class="brand" href="/helpme/">guxos <span>HelpMe</span></a><button class="lang">FR · Français</button></header>
+  <h1 data-en="Help someone on their PC, from any browser" data-fr="Aidez quelqu'un sur son PC, depuis n'importe quel navigateur">Help someone on their PC, from any browser</h1>
+  <p class="lead" data-en="The person who needs help runs a tiny program and reads you a 9-digit code. You type it here — on a PC, a Mac or a phone — and see their screen. Free, open source, end-to-end encrypted." data-fr="La personne qui a besoin d'aide lance un petit programme et vous dicte un code à 9 chiffres. Vous le saisissez ici — sur PC, Mac ou téléphone — et vous voyez son écran. Gratuit, open source, chiffré de bout en bout.">The person who needs help runs a tiny program and reads you a 9-digit code. You type it here — on a PC, a Mac or a phone — and see their screen. Free, open source, end-to-end encrypted.</p>
   <div class="grid">
     <div class="card">
-      <h2 data-en="I need help" data-fr="J'ai besoin d'aide"></h2>
-      <p class="muted" data-en="Download HelpMe (Windows 10/11, 7 MB, nothing to install), run it, and send the link it shows to the person helping you." data-fr="Téléchargez HelpMe (Windows 10/11, 7 Mo, rien à installer), lancez-le et envoyez le lien affiché à la personne qui vous aide."></p>
-      <p><a class="btn" href="/helpme/HelpMe.exe" download data-en="Download HelpMe.exe" data-fr="Télécharger HelpMe.exe"></a></p>
-      <p class="muted small">SHA-256 : <span id="sha">…</span></p>
+      <h2 data-en="I'm helping someone" data-fr="J'aide quelqu'un">I'm helping someone</h2>
+      <p class="muted" data-en="Enter the code shown in their HelpMe window:" data-fr="Saisissez le code affiché dans leur fenêtre HelpMe :">Enter the code shown in their HelpMe window:</p>
+      <input class="field code" id="codein" inputmode="numeric" autocomplete="off" placeholder="123 456 789" maxlength="11">
+      <button class="btn" id="codego" data-en="Connect" data-fr="Se connecter">Connect</button>
+      <p class="muted" id="codemsg"></p>
     </div>
     <div class="card">
-      <h2 data-en="I'm helping someone" data-fr="J'aide quelqu'un"></h2>
-      <p class="muted" data-en="Just open the link you received: it starts with guxos.com/helpme/#. Nothing to install, any recent browser works, even on a phone." data-fr="Ouvrez simplement le lien reçu : il commence par guxos.com/helpme/#. Rien à installer, n'importe quel navigateur récent fonctionne, même sur téléphone."></p>
-      <p class="muted" data-en="The person you help must accept your request on their screen before you see anything." data-fr="La personne aidée doit accepter votre demande sur son écran avant que vous ne voyiez quoi que ce soit."></p>
+      <h2 data-en="I need help" data-fr="J'ai besoin d'aide">I need help</h2>
+      <p class="muted" data-en="Download HelpMe (Windows 10/11, 8 MB, nothing to install), run it, and give the code it shows to the person helping you." data-fr="Téléchargez HelpMe (Windows 10/11, 8 Mo, rien à installer), lancez-le et donnez le code affiché à la personne qui vous aide.">Download HelpMe (Windows 10/11, 8 MB, nothing to install), run it, and give the code it shows to the person helping you.</p>
+      <p><a class="btn" href="/helpme/HelpMe.exe" download data-en="Download HelpMe.exe" data-fr="Télécharger HelpMe.exe">Download HelpMe.exe</a></p>
+      <p class="muted small">SHA-256 : <span class="sha">…</span></p>
     </div>
   </div>
 
-  <h3 data-en="Built to be safe" data-fr="Conçu pour être sûr"></h3>
+  <div class="card">
+    <h2 data-en="Receive help requests (families, IT departments)" data-fr="Recevoir les demandes d'aide (familles, services informatiques)">Receive help requests (families, IT departments)</h2>
+    <p class="muted" data-en="Create your help channel once. People you help get a personal HelpMe with a “Request help” button: their request, with the code, appears on your page. Requests are encrypted for you only." data-fr="Créez votre canal d'aide une fois. Les personnes que vous aidez reçoivent un HelpMe personnalisé avec un bouton « Demander de l'aide » : leur demande, avec le code, arrive sur votre page. Les demandes sont chiffrées pour vous seul.">Create your help channel once. People you help get a personal HelpMe with a “Request help” button: their request, with the code, appears on your page. Requests are encrypted for you only.</p>
+    <div id="mychannels"></div>
+    <input class="field" id="chname" maxlength="40" data-ph-en="Your name as they will see it (e.g. IT support, Tom)" data-ph-fr="Votre nom tel qu'ils le verront (ex. : Service informatique, Thomas)">
+    <button class="btn" id="chcreate" data-en="Create my help channel" data-fr="Créer mon canal d'aide">Create my help channel</button>
+    <div id="chres"></div>
+  </div>
+
+  <h3 data-en="Built to be safe" data-fr="Conçu pour être sûr">Built to be safe</h3>
   <ul class="checks">
-    <li data-en="End-to-end encryption (AES-GCM): the key is in the part of the link after #, which browsers never send to a server. Our relay only passes on data it cannot read." data-fr="Chiffrement de bout en bout (AES-GCM) : la clé est dans la partie du lien après #, que les navigateurs n'envoient jamais à un serveur. Notre relais ne transmet que des données qu'il ne peut pas lire."></li>
-    <li data-en="Explicit consent every time: nobody sees or controls anything until the person helped clicks “Yes”." data-fr="Accord explicite à chaque fois : personne ne voit ni ne contrôle rien tant que la personne aidée n'a pas cliqué sur « Oui »."></li>
-    <li data-en="No account, no password, no unattended access: the link only works while the HelpMe window is open. Close it and everything stops." data-fr="Pas de compte, pas de mot de passe, pas d'accès sans surveillance : le lien ne fonctionne que tant que la fenêtre HelpMe est ouverte. Fermez-la et tout s'arrête."></li>
-    <li><span data-en="Open source (AGPL-3.0): anyone can check the code on " data-fr="Open source (AGPL-3.0) : tout le monde peut vérifier le code sur "></span><a href="https://github.com/webgisman/helpme" rel="noopener">GitHub</a>.</li>
+    <li data-en="End-to-end encryption: with a link, the key is in the part after #, never sent to a server; with a code, both sides derive the key with SPAKE2, so even our relay cannot test codes offline." data-fr="Chiffrement de bout en bout : avec un lien, la clé est dans la partie après #, jamais envoyée à un serveur ; avec un code, les deux côtés calculent la clé avec SPAKE2, si bien que même notre relais ne peut pas tester des codes hors ligne.">End-to-end encryption.</li>
+    <li data-en="A code dies after 3 wrong attempts. Explicit consent every time: nothing is shared until the person clicks “Yes”, and they can stop at any time." data-fr="Un code est annulé après 3 essais faux. Accord explicite à chaque fois : rien n'est partagé avant que la personne clique sur « Oui », et elle peut arrêter à tout moment.">A code dies after 3 wrong attempts.</li>
+    <li data-en="No account, no password, no unattended access: a session only exists while the HelpMe window is open." data-fr="Pas de compte, pas de mot de passe, pas d'accès sans surveillance : une session n'existe que tant que la fenêtre HelpMe est ouverte.">No account, no password, no unattended access.</li>
+    <li><span data-en="Open source (AGPL-3.0): " data-fr="Open source (AGPL-3.0) : ">Open source (AGPL-3.0): </span><a href="https://github.com/webgisman/helpme" rel="noopener">github.com/webgisman/helpme</a></li>
   </ul>
-
-  <h3 data-en="Beware of scams" data-fr="Attention aux arnaques"></h3>
-  <p class="muted" data-en="Never run HelpMe because someone called you out of the blue (fake bank, fake Microsoft or antivirus support). Only use it with people you know and asked for help." data-fr="Ne lancez jamais HelpMe parce que quelqu'un vous a appelé sans que vous l'ayez demandé (faux conseiller bancaire, faux support Microsoft ou antivirus). Utilisez-le seulement avec des personnes que vous connaissez et à qui vous avez demandé de l'aide."></p>
-
+  <h3 data-en="Beware of scams" data-fr="Attention aux arnaques">Beware of scams</h3>
+  <p class="muted" data-en="Never run HelpMe because someone called you out of the blue (fake bank, fake Microsoft or antivirus support). Only use it with people you know and asked for help." data-fr="Ne lancez jamais HelpMe parce que quelqu'un vous a appelé sans que vous l'ayez demandé (faux conseiller bancaire, faux support Microsoft ou antivirus). Utilisez-le seulement avec des personnes que vous connaissez et à qui vous avez demandé de l'aide.">Never run HelpMe because someone called you out of the blue.</p>
   <h3>FAQ</h3>
-  <p><strong data-en="Windows says “Windows protected your PC”." data-fr="Windows affiche « Windows a protégé votre ordinateur »."></strong><br><span class="muted" data-en="HelpMe is new and not yet code-signed. Click “More info”, then “Run anyway”. You can check the file's SHA-256 above." data-fr="HelpMe est récent et pas encore signé. Cliquez sur « Informations complémentaires », puis « Exécuter quand même ». Vous pouvez vérifier l'empreinte SHA-256 du fichier ci-dessus."></span></p>
-  <p><strong data-en="Can the helper control windows that ask for administrator rights?" data-fr="La personne qui aide peut-elle utiliser les fenêtres qui demandent les droits administrateur ?"></strong><br><span class="muted" data-en="No: Windows blocks it for safety (as with other tools that are not installed as a service). The person helped clicks those prompts themselves." data-fr="Non : Windows l'empêche par sécurité (comme pour les autres outils non installés en service). La personne aidée clique elle-même sur ces fenêtres."></span></p>
-  <p><strong data-en="Mac and Linux?" data-fr="Et Mac, Linux ?"></strong><br><span class="muted" data-en="The helper can use any system. The person helped needs Windows for now; Mac and Linux are planned." data-fr="La personne qui aide peut utiliser n'importe quel système. La personne aidée doit être sous Windows pour l'instant ; Mac et Linux sont prévus."></span></p>
+  <p><strong data-en="Windows says “Windows protected your PC”." data-fr="Windows affiche « Windows a protégé votre ordinateur ».">Windows says “Windows protected your PC”.</strong><br><span class="muted" data-en="HelpMe is not code-signed yet. Click “More info”, then “Run anyway”. Check the SHA-256 above if you wish." data-fr="HelpMe n'est pas encore signé. Cliquez sur « Informations complémentaires », puis « Exécuter quand même ». Vous pouvez vérifier l'empreinte SHA-256 ci-dessus.">HelpMe is not code-signed yet.</span></p>
+  <p><strong data-en="Administrator prompts?" data-fr="Fenêtres administrateur ?">Administrator prompts?</strong><br><span class="muted" data-en="Windows blocks remote input on elevated windows. The person clicks “Run as administrator” in HelpMe (and types the admin password you give them): you can then use elevated windows too." data-fr="Windows bloque le contrôle à distance des fenêtres élevées. La personne clique sur « Relancer en administrateur » dans HelpMe (et saisit le mot de passe administrateur que vous lui donnez) : vous pouvez alors les utiliser aussi.">Windows blocks remote input on elevated windows.</span></p>
+  <p><strong data-en="Deploying in a company?" data-fr="Déploiement en entreprise ?">Deploying in a company?</strong><br><span class="muted" data-en="Create a channel above, then deploy HelpMe.exe with the helpme.json file it gives you (GPO, Intune…). Allow wss://guxos.com on port 443 and exclude it from SSL inspection; whitelist the SHA-256 in your antivirus." data-fr="Créez un canal ci-dessus, puis déployez HelpMe.exe avec le fichier helpme.json fourni (GPO, Intune…). Autorisez wss://guxos.com sur le port 443 et excluez-le de l'inspection SSL ; ajoutez l'empreinte SHA-256 en exception dans votre antivirus.">Create a channel, deploy HelpMe.exe with helpme.json.</span></p>
+  <footer>© Guxos · <a href="/">guxos.com</a> · <a href="https://github.com/webgisman/helpme" rel="noopener">GitHub</a> · <a href="mailto:contact@guxos.com">contact@guxos.com</a></footer>
+</div></div>
 
-  <footer>© Guxos · <a href="/">guxos.com</a> · <a href="https://github.com/webgisman/helpme" rel="noopener">GitHub</a> · <a href="mailto:contact@guxos.com">contact@guxos.com</a> · <span data-en="Free and open source" data-fr="Gratuit et open source"></span></footer>
-</div>
-</div>
-
-<div id="join" style="display:none">
+<!-- personal download page (#get=…) -->
+<div id="get" class="hide"><div class="center">
   <a class="brand" href="/helpme/">guxos <span>HelpMe</span></a>
-  <h2 data-en="Connect to the shared screen" data-fr="Se connecter à l'écran partagé"></h2>
-  <p class="muted" data-en="Your first name will be shown to the person you help, who must accept." data-fr="Votre prénom sera affiché à la personne aidée, qui devra accepter."></p>
-  <input id="name" maxlength="40" autocomplete="given-name">
-  <button class="btn" id="go" data-en="Connect" data-fr="Se connecter"></button>
-  <p class="muted" id="jstate"></p>
-</div>
+  <h2 id="gettitle"></h2>
+  <p class="muted" data-en="Download your personal HelpMe (Windows 10/11, nothing to install). When you need help, open it and click “Request help”." data-fr="Téléchargez votre HelpMe personnel (Windows 10/11, rien à installer). Quand vous avez besoin d'aide, ouvrez-le et cliquez sur « Demander de l'aide ».">Download your personal HelpMe.</p>
+  <p><a class="btn" id="getdl" href="/helpme/HelpMe.exe" data-en="Download HelpMe" data-fr="Télécharger HelpMe">Download HelpMe</a></p>
+  <p class="muted small" data-en="Keep the file name: it tells HelpMe who to send your requests to." data-fr="Gardez le nom du fichier : il indique à HelpMe à qui envoyer vos demandes.">Keep the file name.</p>
+</div></div>
 
-<div id="viewer">
+<!-- helper inbox (#inbox=…) -->
+<div id="inbox" class="hide"><div class="wrap">
+  <header><a class="brand" href="/helpme/">guxos <span>HelpMe</span></a><button class="lang">FR · Français</button></header>
+  <h1 id="inboxtitle"></h1>
+  <p class="muted"><span id="inboxstate"></span> · <a href="#" id="notifbtn" data-en="Enable notifications" data-fr="Activer les notifications">Enable notifications</a></p>
+  <div id="reqs"></div>
+  <p class="muted" id="noreq" data-en="No request yet. Keep this page open: new requests appear here with a sound. Requests are kept 1 hour." data-fr="Aucune demande pour l'instant. Gardez cette page ouverte : les nouvelles demandes apparaissent ici avec un son. Elles sont conservées 1 heure.">No request yet.</p>
+  <h3 data-en="Share with the people you help" data-fr="À partager avec les personnes que vous aidez">Share with the people you help</h3>
+  <p class="muted" data-en="Personal download link (they will have a “Request help” button):" data-fr="Lien de téléchargement personnel (ils auront un bouton « Demander de l'aide ») :">Personal download link:</p>
+  <pre id="sharelink"></pre>
+  <p class="muted" data-en="IT departments — put this helpme.json next to HelpMe.exe on every PC:" data-fr="Services informatiques — placez ce helpme.json à côté de HelpMe.exe sur chaque PC :">IT departments — helpme.json:</p>
+  <pre id="cfgjson"></pre>
+  <p class="muted small" data-en="Bookmark this page: its address is your private key. Anyone with it can read your requests." data-fr="Ajoutez cette page à vos favoris : son adresse est votre clé privée. Quiconque la possède peut lire vos demandes.">Bookmark this page.</p>
+</div></div>
+
+<!-- connecting -->
+<div id="join" class="hide"><div class="center">
+  <a class="brand" href="/helpme/">guxos <span>HelpMe</span></a>
+  <h2 data-en="Connect to the shared screen" data-fr="Se connecter à l'écran partagé">Connect to the shared screen</h2>
+  <p class="muted" data-en="Your first name will be shown to the person you help, who must accept." data-fr="Votre prénom sera affiché à la personne aidée, qui devra accepter.">Your first name will be shown to the person you help.</p>
+  <input class="field" id="name" maxlength="40" autocomplete="given-name">
+  <button class="btn" id="go" data-en="Connect" data-fr="Se connecter">Connect</button>
+  <p class="muted" id="jstate"></p>
+</div></div>
+
+<!-- viewer -->
+<div id="viewer" class="hide">
   <div id="bar">
     <strong class="brand">guxos <span>HelpMe</span></strong>
     <span id="state"></span><span class="sp"></span>
-    <button id="kbbtn" data-en="⌨ Keyboard" data-fr="⌨ Clavier"></button>
-    <button id="fsbtn" data-en="⛶ Full screen" data-fr="⛶ Plein écran"></button>
-    <button id="stop" class="stop" data-en="End" data-fr="Terminer"></button>
+    <select id="monsel" class="hide" title="Display"></select>
+    <button id="clipbtn" class="hide" data-en="📋 Their clipboard" data-fr="📋 Son presse-papiers">📋 Their clipboard</button>
+    <button id="kbbtn" data-en="⌨ Keyboard" data-fr="⌨ Clavier">⌨ Keyboard</button>
+    <button id="fsbtn" data-en="⛶ Full screen" data-fr="⛶ Plein écran">⛶ Full screen</button>
+    <button id="stop" class="stop" data-en="End" data-fr="Terminer">End</button>
   </div>
+  <div id="note"></div>
   <div id="stage" tabindex="0"><div id="wrapc"><canvas id="screen" width="16" height="9"></canvas><div id="cur"></div></div><input id="kbd" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
 </div>
+<script src="/helpme/spake2.js" defer></script>
 <script src="/helpme/helpme.js" defer></script>
 </body>
 </html>

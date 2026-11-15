@@ -10,7 +10,7 @@ import (
 // Real capture of the primary monitor (in memory only) and encoding of a full frame.
 func TestCaptureReal(t *testing.T) {
 	setDPIAware()
-	c, err := newCapturer()
+	c, err := newCapturer(monitors()[0])
 	if err != nil {
 		t.Skip("no screen: ", err)
 	}

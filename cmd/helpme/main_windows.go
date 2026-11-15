@@ -1,17 +1,24 @@
 //go:build windows && amd64
 
 // HelpMe.exe runs on the computer of the person being helped. No account, no install, no unattended
-// access: it shows a session link (copied to the clipboard), asks for explicit consent on every
-// connection, and the session ends when the window is closed.
+// access: it shows a short code and a link, asks for explicit consent on every connection, and the
+// session ends when the window is closed or Stop is pressed.
 package main
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/hmac"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math/big"
+	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -20,15 +27,23 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/webgisman/helpme/internal/proto"
+	"github.com/webgisman/helpme/internal/spake2"
 )
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 var (
-	relayURL = flag.String("relay", "wss://guxos.com/helpme/ws", "relay address")
-	siteURL  = flag.String("site", "https://guxos.com/helpme/", "viewer page address")
-	fr       bool
+	relayURL   = flag.String("relay", "wss://guxos.com/helpme/ws", "relay address")
+	siteURL    = flag.String("site", "https://guxos.com/helpme/", "viewer page address")
+	channelArg = flag.String("channel", "", "help channel <id>.<public key> (from the helper's page)")
+	helperArg  = flag.String("helper-name", "", "name of the helper shown on the Request help button")
+	resumeArg  = flag.String("resume", "", "internal: <room>.<key> when relaunched as administrator")
+	secretArg  = flag.String("secret", "", "internal: secret part of the short code")
+	shortArg   = flag.String("short", "", "internal: short code to ask the relay for")
+	fr         bool
 )
+
+func init() { runtime.LockOSThread() } // the window lives on the main thread
 
 func t(frText, enText string) string {
 	if fr {
@@ -37,27 +52,85 @@ func t(frText, enText string) string {
 	return enText
 }
 
-type host struct {
-	conn   *websocket.Conn
-	cipher *proto.Cipher
-	wmu    sync.Mutex
+// app holds what survives reconnections: the session identity and the window.
+type app struct {
+	room, key, secret string
+	linkCipher        *proto.Cipher
+	ui                *gui
 
-	mu      sync.Mutex
-	active  bool
-	cancel  context.CancelFunc
-	asking  bool
-	acks    chan uint32
-	screenW int
-	screenH int
-	h264OK  bool // the viewer can decode H.264 (WebCodecs)
+	mu       sync.Mutex
+	short    string
+	failures int
+	cur      *host
+
+	chanID  string
+	chanPub *ecdh.PublicKey
+	helper  string
 }
 
-func (h *host) send(plain []byte) error {
+func randomDigits(n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		d, _ := rand.Int(rand.Reader, big.NewInt(10))
+		b.WriteByte(byte('0' + d.Int64()))
+	}
+	return b.String()
+}
+
+func (a *app) link() string { return *siteURL + "#" + a.room + "." + a.key }
+
+func (a *app) code() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.short == "" {
+		return ""
+	}
+	c := a.short + a.secret
+	return c[:3] + " " + c[3:6] + " " + c[6:]
+}
+
+func (a *app) refreshCode() {
+	if c := a.code(); c != "" {
+		a.ui.setText(a.ui.code, c)
+	}
+}
+
+// host is one connection to the relay.
+type host struct {
+	app  *app
+	conn *websocket.Conn
+	wmu  sync.Mutex
+
+	mu         sync.Mutex
+	cipher     *proto.Cipher // per viewer: link key, or SPAKE2-derived key
+	pake       *spake2.State
+	active     bool
+	cancel     context.CancelFunc
+	asking     bool
+	acks       chan uint32
+	mon        monitor
+	monIndex   int
+	monChanged bool
+	h264OK     bool
+	clipIgnore uint32
+}
+
+func (h *host) sendRaw(b []byte) error {
 	h.wmu.Lock()
 	defer h.wmu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return h.conn.Write(ctx, websocket.MessageBinary, h.cipher.Seal(plain))
+	return h.conn.Write(ctx, websocket.MessageBinary, b)
+}
+
+func (h *host) send(plain []byte) error {
+	h.mu.Lock()
+	c := h.cipher
+	h.mu.Unlock()
+	if c == nil {
+		return fmt.Errorf("no session key")
+	}
+	return h.sendRaw(c.Seal(plain))
 }
 
 func (h *host) sendJSON(typ byte, v any) error {
@@ -75,8 +148,9 @@ func (h *host) stop(reason string) {
 	h.mu.Unlock()
 	if was {
 		setTitle("HelpMe")
-		fmt.Println("\n  " + t("■ Session terminée", "■ Session ended") + " (" + reason + ").")
-		fmt.Println("  " + t("Le même lien reste valable tant que cette fenêtre est ouverte.", "The same link stays valid while this window is open."))
+		h.app.ui.setActive(false)
+		h.app.ui.setStatus(stIdle, t("Session terminée ("+reason+").\nLe code reste valable tant que cette fenêtre est ouverte.",
+			"Session ended ("+reason+").\nThe code stays valid while this window is open."))
 	}
 }
 
@@ -96,6 +170,61 @@ func cleanName(s string) string {
 	return s
 }
 
+// onPeer starts a viewer's handshake: link viewers already hold the key, code viewers run SPAKE2.
+func (h *host) onPeer(mode string) {
+	a := h.app
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.pake = nil
+	if mode != "code" {
+		h.cipher = a.linkCipher
+		return
+	}
+	h.cipher = nil
+	st, msg, err := spake2.Start(spake2.A, a.room, a.secret)
+	if err != nil {
+		return
+	}
+	h.pake = st
+	go h.sendRaw(append([]byte{proto.PakeA}, msg...))
+}
+
+func (h *host) onPakeB(m []byte) {
+	a := h.app
+	h.mu.Lock()
+	st := h.pake
+	h.pake = nil
+	h.mu.Unlock()
+	if st == nil || len(m) != 1+65+32 {
+		return
+	}
+	key, confirm, expected, err := st.Finish(m[1:66])
+	if err != nil || !hmac.Equal(expected, m[66:]) {
+		h.sendRaw([]byte{proto.PakeFail})
+		a.mu.Lock()
+		a.failures++
+		changed := a.failures >= 3
+		if changed { // too many wrong codes: new secret, the old code is dead
+			a.secret, a.failures = randomDigits(5), 0
+		}
+		a.mu.Unlock()
+		if changed {
+			a.refreshCode()
+			a.ui.setStatus(stWarn, t("Plusieurs codes erronés ont été essayés : le code a été changé.",
+				"Several wrong codes were tried: the code has been changed."))
+		}
+		return
+	}
+	c, _ := proto.NewCipher(key)
+	h.mu.Lock()
+	h.cipher = c
+	h.mu.Unlock()
+	a.mu.Lock()
+	a.failures = 0
+	a.mu.Unlock()
+	h.sendRaw(append([]byte{proto.PakeOK}, confirm...))
+}
+
 func (h *host) onViewHello(payload []byte) {
 	var hello struct {
 		Name string
@@ -110,19 +239,20 @@ func (h *host) onViewHello(payload []byte) {
 	}
 	h.asking = true
 	h.mu.Unlock()
-	fmt.Printf("\n  %s\n", t("« "+name+" » demande à voir et contrôler votre écran…", "\""+name+"\" asks to view and control your screen…"))
+	ui := h.app.ui
+	ui.setStatus(stWarn, t("« "+name+" » demande à voir et contrôler votre écran…", "\""+name+"\" asks to view and control your screen…"))
 	ok := askConsent("HelpMe",
 		t("« "+name+" » demande à voir votre écran et à utiliser votre souris et votre clavier.\n\n"+
 			"N'acceptez que si vous connaissez cette personne et que vous lui avez demandé de l'aide.\n"+
-			"Vous pourrez tout arrêter à tout moment en fermant la fenêtre HelpMe.\n\nAccepter ?",
+			"Vous pourrez tout arrêter à tout moment avec le bouton « Arrêter » ou en fermant HelpMe.\n\nAccepter ?",
 			"\""+name+"\" asks to see your screen and use your mouse and keyboard.\n\n"+
 				"Only accept if you know this person and asked them for help.\n"+
-				"You can stop everything at any time by closing the HelpMe window.\n\nAccept?"))
+				"You can stop at any time with the Stop button or by closing HelpMe.\n\nAccept?"))
 	h.mu.Lock()
 	h.asking = false
 	h.mu.Unlock()
 	if !ok {
-		fmt.Println("  " + t("✗ Refusé.", "✗ Refused."))
+		ui.setStatus(stIdle, t("Demande refusée.", "Request declined."))
 		h.sendJSON(proto.MsgStatus, map[string]string{"state": "denied"})
 		return
 	}
@@ -130,12 +260,43 @@ func (h *host) onViewHello(payload []byte) {
 	h.mu.Lock()
 	h.active, h.cancel, h.h264OK = true, cancel, hello.H264
 	h.acks = make(chan uint32, 8)
+	h.clipIgnore = clipboardSeq()
 	h.mu.Unlock()
-	setTitle(t("● HelpMe — SESSION EN COURS (fermez pour arrêter)", "● HelpMe — SESSION ACTIVE (close to stop)"))
-	fmt.Println("  " + t("● Session en cours avec « "+name+" ». Fermez cette fenêtre pour l'arrêter.",
-		"● Session active with \""+name+"\". Close this window to stop it."))
+	setTitle(t("● HelpMe — SESSION EN COURS", "● HelpMe — SESSION ACTIVE"))
+	ui.setActive(true)
+	ui.setStatus(stActive, t("● Session en cours avec « "+name+" ».\nCette personne voit votre écran et peut l'utiliser.",
+		"● Session active with \""+name+"\".\nThey can see and use your screen."))
 	h.sendJSON(proto.MsgStatus, map[string]string{"state": "accepted"})
 	go h.stream(ctx)
+	go h.watchClipboard(ctx)
+}
+
+// watchClipboard sends text copied on this computer to the helper.
+func (h *host) watchClipboard(ctx context.Context) {
+	last := clipboardSeq()
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		seq := clipboardSeq()
+		if seq == last {
+			continue
+		}
+		last = seq
+		h.mu.Lock()
+		ignore := h.clipIgnore
+		h.mu.Unlock()
+		if seq == ignore {
+			continue // our own write from the helper's paste
+		}
+		if text := readClipboardText(256 << 10); text != "" {
+			h.send(append([]byte{proto.MsgClipboard}, text...))
+		}
+	}
 }
 
 // Mode switching thresholds.
@@ -153,11 +314,7 @@ const (
 func (h *host) stream(ctx context.Context) {
 	runtime.LockOSThread() // the Media Foundation encoder lives on this thread
 	defer runtime.UnlockOSThread()
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Println("  error:", r)
-		}
-	}()
+	defer func() { recover() }()
 	var (
 		capt      *capturer
 		enc       *h264Encoder
@@ -166,8 +323,8 @@ func (h *host) stream(ctx context.Context) {
 		quality   = 70
 		hot, calm int
 		videoOn   bool
-		videoSent bool // MsgVideoOn already sent for the current encoder
-		noVideo   bool // encoder unavailable on this machine
+		videoSent bool
+		noVideo   bool
 		lastCX    = -1
 		lastCY    = -1
 	)
@@ -182,7 +339,6 @@ func (h *host) stream(ctx context.Context) {
 	h.mu.Lock()
 	canVideo := h.h264OK
 	h.mu.Unlock()
-
 	stopVideo := func() {
 		if enc != nil {
 			enc.close()
@@ -192,26 +348,34 @@ func (h *host) stream(ctx context.Context) {
 			h.send([]byte{proto.MsgVideoOff})
 		}
 		videoOn, videoSent, calm, hot = false, false, 0, 0
-		prev = nil // full sharp refresh in tiles mode
+		prev = nil
 	}
-
 	for ctx.Err() == nil {
 		start := time.Now()
-		w, hh := screenSize()
-		if capt == nil || w != capt.w || hh != capt.h {
+		mons := monitors()
+		h.mu.Lock()
+		idx, changed := h.monIndex, h.monChanged
+		h.monChanged = false
+		h.mu.Unlock()
+		if idx >= len(mons) {
+			idx = 0
+		}
+		m := mons[idx]
+		if capt == nil || changed || m.X != capt.x || m.Y != capt.y || m.W != capt.w || m.H != capt.h {
 			stopVideo()
 			if capt != nil {
 				capt.close()
 			}
 			var err error
-			if capt, err = newCapturer(); err != nil {
+			if capt, err = newCapturer(m); err != nil {
 				time.Sleep(time.Second)
 				continue
 			}
 			h.mu.Lock()
-			h.screenW, h.screenH = capt.w, capt.h
+			h.mon = m
 			h.mu.Unlock()
-			if h.sendJSON(proto.MsgHello, map[string]any{"w": capt.w, "h": capt.h, "os": "windows", "ver": version}) != nil {
+			if h.sendJSON(proto.MsgHello, map[string]any{"w": m.W, "h": m.H, "os": "windows", "ver": version,
+				"monitors": mons, "monitor": idx, "admin": isAdmin()}) != nil {
 				return
 			}
 		}
@@ -220,12 +384,11 @@ func (h *host) stream(ctx context.Context) {
 			continue
 		}
 		rects := changedRects(prev, capt.bits, capt.w, capt.h, prev == nil)
-		changed := 0
+		area := 0
 		for _, r := range rects {
-			changed += r.w * r.h
+			area += r.w * r.h
 		}
-		motion := float64(changed) / float64(capt.w*capt.h)
-
+		motion := float64(area) / float64(capt.w*capt.h)
 		if !videoOn && canVideo && !noVideo && prev != nil {
 			if motion >= motionHigh {
 				hot++
@@ -233,9 +396,8 @@ func (h *host) stream(ctx context.Context) {
 				hot = 0
 			}
 			if hot >= framesToVideo {
-				bitrate := min(6_000_000, max(1_500_000, capt.w*capt.h*2))
 				var err error
-				if enc, err = newH264Encoder(capt.w, capt.h, videoFPS, bitrate); err != nil {
+				if enc, err = newH264Encoder(capt.w, capt.h, videoFPS, min(6_000_000, max(1_500_000, capt.w*capt.h*2))); err != nil {
 					noVideo = true // e.g. Windows N without the Media Feature Pack: stay on tiles
 				} else {
 					videoOn, calm = true, 0
@@ -252,7 +414,6 @@ func (h *host) stream(ctx context.Context) {
 				continue
 			}
 		}
-
 		if videoOn {
 			data, err := enc.encode(capt.bits, capt.w)
 			if err != nil {
@@ -294,9 +455,14 @@ func (h *host) stream(ctx context.Context) {
 			prev = make([]byte, len(capt.bits))
 		}
 		copy(prev, capt.bits)
-		if cx, cy := cursorPos(); cx != lastCX || cy != lastCY {
+		cx, cy := cursorPos()
+		cx, cy = cx-m.X, cy-m.Y
+		if cx < 0 || cy < 0 || cx >= m.W || cy >= m.H {
+			cx, cy = 65535, 65535 // on another display: hidden
+		}
+		if cx != lastCX || cy != lastCY {
 			lastCX, lastCY = cx, cy
-			h.send(proto.Cursor(max(0, cx), max(0, cy)))
+			h.send(proto.Cursor(cx, cy))
 		}
 		seq++
 		if h.send(proto.U32(proto.MsgFrameEnd, seq)) != nil {
@@ -325,7 +491,6 @@ func (h *host) stream(ctx context.Context) {
 	}
 }
 
-// waitAck waits for the viewer to acknowledge frame seq; false on timeout.
 func (h *host) waitAck(ctx context.Context, seq uint32, timeout time.Duration) bool {
 	h.mu.Lock()
 	ch := h.acks
@@ -346,133 +511,138 @@ func (h *host) waitAck(ctx context.Context, seq uint32, timeout time.Duration) b
 	}
 }
 
-func (h *host) onInput(msg []byte) {
+func (h *host) onMessage(msg []byte) {
 	h.mu.Lock()
-	active, w, hh := h.active, h.screenW, h.screenH
+	active, m := h.active, h.mon
 	h.mu.Unlock()
-	if !active || w == 0 {
+	switch msg[0] {
+	case proto.MsgViewHello:
+		go h.onViewHello(msg[1:])
+		return
+	case proto.MsgAck:
+		if len(msg) >= 5 {
+			h.mu.Lock()
+			ch := h.acks
+			h.mu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- binary.LittleEndian.Uint32(msg[1:]):
+				default:
+				}
+			}
+		}
+		return
+	case proto.MsgBye:
+		h.stop(t("la personne a terminé", "the helper ended the session"))
+		return
+	}
+	if !active || m.W == 0 {
 		return
 	}
 	switch msg[0] {
 	case proto.MsgMouse:
-		if len(msg) < 8 {
-			return
+		if len(msg) >= 8 {
+			x, y := int(binary.LittleEndian.Uint16(msg[2:])), int(binary.LittleEndian.Uint16(msg[4:]))
+			injectMouse(int(msg[1]), min(x, m.W-1), min(y, m.H-1), m, int16(binary.LittleEndian.Uint16(msg[6:])))
 		}
-		x, y := int(binary.LittleEndian.Uint16(msg[2:])), int(binary.LittleEndian.Uint16(msg[4:]))
-		delta := int16(binary.LittleEndian.Uint16(msg[6:]))
-		injectMouse(int(msg[1]), min(x, w-1), min(y, hh-1), w, hh, delta)
 	case proto.MsgKey:
-		if len(msg) < 5 {
-			return
+		if len(msg) >= 5 {
+			injectKey(msg[1] == 1, binary.LittleEndian.Uint16(msg[2:]), msg[4] == 1)
 		}
-		injectKey(msg[1] == 1, binary.LittleEndian.Uint16(msg[2:]), msg[4] == 1)
 	case proto.MsgText:
 		if len(msg) > 1 && len(msg) < 2000 {
 			injectText(string(msg[1:]))
+		}
+	case proto.MsgClipboard:
+		if len(msg) > 1 && len(msg) < 1<<20 {
+			copyToClipboard(string(msg[1:]))
+			h.mu.Lock()
+			h.clipIgnore = clipboardSeq()
+			h.mu.Unlock()
+		}
+	case proto.MsgMonitor:
+		if len(msg) >= 2 {
+			h.mu.Lock()
+			h.monIndex, h.monChanged = int(msg[1]), true
+			h.mu.Unlock()
 		}
 	}
 }
 
 func (h *host) run(ctx context.Context) error {
+	a := h.app
 	for {
 		typ, data, err := h.conn.Read(ctx)
 		if err != nil {
 			return err
 		}
 		if typ == websocket.MessageText {
-			var m struct{ T string }
+			var m struct{ T, Code, Mode string }
 			json.Unmarshal(data, &m)
-			if m.T == "gone" {
+			switch m.T {
+			case "code":
+				a.mu.Lock()
+				a.short = m.Code
+				a.mu.Unlock()
+				a.refreshCode()
+			case "peer":
+				h.onPeer(m.Mode)
+			case "gone":
 				h.stop(t("la personne s'est déconnectée", "the helper disconnected"))
+				h.mu.Lock()
+				h.cipher, h.pake = nil, nil
+				h.mu.Unlock()
 			}
 			continue
 		}
-		msg, err := h.cipher.Open(data)
-		if err != nil || len(msg) == 0 {
-			continue // wrong key or tampered message: ignored
+		if len(data) > 0 && data[0] == proto.PakeB {
+			h.onPakeB(data)
+			continue
 		}
-		switch msg[0] {
-		case proto.MsgViewHello:
-			go h.onViewHello(msg[1:])
-		case proto.MsgAck:
-			if len(msg) >= 5 {
-				h.mu.Lock()
-				ch := h.acks
-				h.mu.Unlock()
-				if ch != nil {
-					select {
-					case ch <- binary.LittleEndian.Uint32(msg[1:]):
-					default:
-					}
-				}
-			}
-		case proto.MsgBye:
-			h.stop(t("la personne a terminé", "the helper ended the session"))
-		default:
-			h.onInput(msg)
+		h.mu.Lock()
+		c := h.cipher
+		h.mu.Unlock()
+		if c == nil {
+			continue
+		}
+		if msg, err := c.Open(data); err == nil && len(msg) > 0 {
+			h.onMessage(msg)
 		}
 	}
 }
 
-func main() {
-	flag.Parse()
-	setDPIAware()
-	fr = isFrench()
-	setTitle("HelpMe")
-	room, key, err := proto.NewSession()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	_, keyBytes, _ := proto.ParseFragment(room + "." + key)
-	cph, _ := proto.NewCipher(keyBytes)
-	link := *siteURL + "#" + room + "." + key
-
-	fmt.Println()
-	fmt.Println("  HelpMe " + version + " — Guxos")
-	fmt.Println("  " + strings.Repeat("─", 60))
-	fmt.Println("  " + t("1. Envoyez ce lien à la personne qui va vous aider :", "1. Send this link to the person who will help you:"))
-	fmt.Println()
-	fmt.Println("     " + link)
-	fmt.Println()
-	if copyToClipboard(link) {
-		fmt.Println("  " + t("   (déjà copié : collez-le dans un SMS, un e-mail ou WhatsApp)", "   (already copied: paste it into a text, an email or WhatsApp)"))
-	}
-	fmt.Println("  " + t("2. Quand elle l'ouvre, Windows vous demande votre accord.", "2. When they open it, Windows asks for your permission."))
-	fmt.Println("  " + t("3. Pour tout arrêter : fermez cette fenêtre.", "3. To stop everything: close this window."))
-	fmt.Println()
-	fmt.Println("  " + t("Chiffré de bout en bout : même notre serveur ne voit pas votre écran.", "End-to-end encrypted: not even our server can see your screen."))
-	fmt.Println("  " + strings.Repeat("─", 60))
-
+func (a *app) connectLoop() {
 	busy := 0
 	for attempt := 0; ; attempt++ {
-		ctx := context.Background()
-		dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		conn, _, err := websocket.Dial(dctx, *relayURL+"?role=host&room="+room, nil)
+		a.mu.Lock()
+		short := a.short
+		if short == "" {
+			short = *shortArg
+		}
+		a.mu.Unlock()
+		dctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		conn, _, err := websocket.Dial(dctx, *relayURL+"?role=host&room="+a.room+"&short="+short, nil)
 		cancel()
 		if err != nil {
 			if attempt == 0 {
-				fmt.Println("  " + t("Connexion au serveur impossible, nouvel essai…", "Cannot reach the server, retrying…"))
+				a.ui.setStatus(stWarn, t("Connexion au serveur impossible, nouvel essai…", "Cannot reach the server, retrying…"))
 			}
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		if attempt > 0 {
-			fmt.Println("  " + t("Connecté.", "Connected."))
-		}
 		conn.SetReadLimit(1 << 20)
-		h := &host{conn: conn, cipher: cph}
-		fmt.Println("\n  " + t("En attente de la personne qui vous aide…", "Waiting for the person helping you…"))
-		err = h.run(ctx)
+		h := &host{app: a, conn: conn}
+		a.mu.Lock()
+		a.cur = h
+		a.mu.Unlock()
+		a.ui.setStatus(stIdle, t("En attente de la personne qui vous aide…", "Waiting for the person helping you…"))
+		err = h.run(context.Background())
 		h.stop(t("connexion perdue", "connection lost"))
 		conn.CloseNow()
 		if strings.Contains(fmt.Sprint(err), "4009") {
-			// The room is still held by the relay (reconnecting too fast) or the relay is full: wait.
-			busy++
-			if busy > 6 {
-				fmt.Println("  " + t("Session indisponible. Relancez HelpMe.", "Session unavailable. Please restart HelpMe."))
-				fmt.Scanln()
-				os.Exit(1)
+			if busy++; busy > 6 {
+				a.ui.setStatus(stWarn, t("Session indisponible. Relancez HelpMe.", "Session unavailable. Please restart HelpMe."))
+				return
 			}
 			time.Sleep(10 * time.Second)
 			continue
@@ -480,4 +650,155 @@ func main() {
 		busy, attempt = 0, 0
 		time.Sleep(2 * time.Second)
 	}
+}
+
+// requestHelp sends the code and link, encrypted with the channel key, to the helper's inbox.
+func (a *app) requestHelp() {
+	a.ui.enableRequest(false)
+	defer func() { time.Sleep(3 * time.Second); a.ui.enableRequest(true) }()
+	payload, _ := json.Marshal(map[string]any{"pc": computerName(), "user": userName(), "code": strings.ReplaceAll(a.code(), " ", ""),
+		"link": a.link(), "ver": version, "ts": time.Now().Unix()})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, *relayURL+"?role=notify&ch="+a.chanID, nil)
+	if err == nil {
+		defer conn.CloseNow()
+		var sealed []byte
+		if sealed, err = proto.SealToChannel(a.chanPub, payload); err == nil {
+			err = conn.Write(ctx, websocket.MessageBinary, sealed)
+		}
+	}
+	var ack struct{ Online int }
+	if err == nil {
+		var data []byte
+		if _, data, err = conn.Read(ctx); err == nil {
+			json.Unmarshal(data, &ack)
+		}
+	}
+	switch {
+	case err != nil:
+		a.ui.setStatus(stWarn, t("La demande n'a pas pu être envoyée. Donnez le code par téléphone.", "The request could not be sent. Read the code out instead."))
+	case ack.Online > 0:
+		a.ui.setStatus(stIdle, t("✓ Demande envoyée à "+a.helper+". Restez près de votre ordinateur.", "✓ Request sent to "+a.helper+". Please stay near your computer."))
+	default:
+		a.ui.setStatus(stIdle, t("✓ Demande envoyée. "+a.helper+" la verra en ouvrant sa page HelpMe (valable 1 h).",
+			"✓ Request sent. "+a.helper+" will see it when they open their HelpMe page (valid 1 h)."))
+	}
+}
+
+var channelInName = regexp.MustCompile(`HelpMe[_-]([A-Za-z0-9_-]{12})\.([A-Za-z0-9_-]{87})`)
+
+// loadChannel reads the help channel from -channel, helpme.json next to the exe, or the exe file name
+// (personal download links are named HelpMe_<id>.<public key>.exe).
+func (a *app) loadChannel() {
+	exe, _ := os.Executable()
+	ch, name := *channelArg, *helperArg
+	if ch == "" {
+		var cfg struct{ Channel, HelperName string }
+		if b, err := os.ReadFile(filepath.Join(filepath.Dir(exe), "helpme.json")); err == nil && json.Unmarshal(b, &cfg) == nil {
+			ch, name = cfg.Channel, cfg.HelperName
+		}
+	}
+	if ch == "" {
+		if m := channelInName.FindStringSubmatch(filepath.Base(exe)); m != nil {
+			ch = m[1] + "." + m[2]
+		}
+	}
+	id, pub, err := proto.ParseChannel(ch)
+	if err != nil {
+		return
+	}
+	a.chanID, a.chanPub = id, pub
+	a.helper = strings.TrimSpace(name)
+	if a.helper == "" {
+		a.helper = t("la personne qui vous aide", "your helper")
+	}
+}
+
+func mustCipher(k []byte) *proto.Cipher {
+	c, _ := proto.NewCipher(k)
+	return c
+}
+
+func main() {
+	flag.Parse()
+	setDPIAware()
+	fr = isFrench()
+	a := &app{}
+	if _, _, err := proto.ParseFragment(*resumeArg); err == nil && regexp.MustCompile(`^\d{5}$`).MatchString(*secretArg) {
+		parts := strings.SplitN(*resumeArg, ".", 2)
+		a.room, a.key, a.secret = parts[0], parts[1], *secretArg
+	} else {
+		a.room, a.key, _ = proto.NewSession()
+		a.secret = randomDigits(5)
+	}
+	_, keyBytes, _ := proto.ParseFragment(a.room + "." + a.key)
+	a.linkCipher = mustCipher(keyBytes)
+	a.loadChannel()
+
+	title := "HelpMe " + version
+	if isAdmin() {
+		title += t(" (administrateur)", " (administrator)")
+	}
+	reqLabel := t("Demander de l'aide à ", "Request help from ") + a.helper
+	a.ui = newGUI(title, a.chanPub != nil, map[string]string{
+		"give_code": t("Donnez ce code à la personne qui vous aide :", "Give this code to the person helping you:"),
+		"or_link":   t("ou envoyez-lui ce lien :", "or send them this link:"),
+		"copy":      t("Copier le lien", "Copy link"),
+		"email":     t("Envoyer par e-mail", "Email link"),
+		"request":   reqLabel,
+		"waiting":   t("Connexion…", "Connecting…"),
+		"admin":     t("Relancer en administrateur", "Run as administrator"),
+		"stop":      t("Arrêter la session", "Stop session"),
+		"footer":    t("Chiffré de bout en bout · guxos.com/helpme", "End-to-end encrypted · guxos.com/helpme"),
+	})
+	a.ui.setText(a.ui.link, a.link())
+	if isAdmin() {
+		a.ui.hideAdmin()
+	}
+	a.ui.onCopy = func() {
+		copyToClipboard(a.link())
+		a.ui.setStatus(stIdle, t("Lien copié : collez-le dans un message (Ctrl+V).", "Link copied: paste it into a message (Ctrl+V)."))
+	}
+	a.ui.onEmail = func() {
+		subject := t("Pouvez-vous m'aider sur mon ordinateur ?", "Can you help me with my computer?")
+		body := t("Ouvrez ce lien pour voir mon écran : ", "Open this link to see my screen: ") + a.link() + "\n" +
+			t("ou saisissez le code ", "or enter the code ") + a.code() + t(" sur ", " at ") + *siteURL
+		shellExecute("open", "mailto:?subject="+url.PathEscape(subject)+"&body="+url.PathEscape(body), "")
+	}
+	a.ui.onRequest = a.requestHelp
+	a.ui.onStop = func() {
+		a.mu.Lock()
+		h := a.cur
+		a.mu.Unlock()
+		if h != nil {
+			h.sendJSON(proto.MsgStatus, map[string]string{"state": "stopped"})
+			h.stop(t("arrêtée par vous", "stopped by you"))
+			h.conn.CloseNow() // the helper is disconnected; the code stays valid
+		}
+	}
+	a.ui.onAdmin = func() {
+		exe, _ := os.Executable()
+		a.mu.Lock()
+		args := fmt.Sprintf("-resume %s.%s -secret %s -short %s", a.room, a.key, a.secret, a.short)
+		a.mu.Unlock()
+		if *channelArg != "" {
+			args += " -channel " + *channelArg
+		}
+		if *helperArg != "" {
+			args += ` -helper-name "` + strings.ReplaceAll(*helperArg, `"`, "") + `"`
+		}
+		a.mu.Lock()
+		if h := a.cur; h != nil {
+			h.conn.CloseNow() // free the room before the elevated copy takes it over
+		}
+		a.mu.Unlock()
+		if shellExecute("runas", exe, args) {
+			os.Exit(0)
+		}
+		a.ui.setStatus(stWarn, t("Élévation refusée.", "Elevation was declined."))
+	}
+	go a.connectLoop()
+	a.ui.run()
+	os.Exit(0)
 }
