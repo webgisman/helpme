@@ -114,7 +114,17 @@
   if (params.inbox) startInbox(params.inbox);
   else if (params.get) startGet(params.get, params.n || "HelpMe");
   else if (hash && hash.indexOf("=") < 0) startJoin({mode: "link", frag: hash});
-  else { show("site"); renderChannels(); }
+  else { show("site"); renderChannels(); loadAds(); }
+
+  // Ads only on the guxos.com landing view: never during a session, in the inbox or on self-hosted copies.
+  function loadAds() {
+    if (location.hostname !== "guxos.com") return;
+    var sc = document.createElement("script");
+    sc.async = true;
+    sc.crossOrigin = "anonymous";
+    sc.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9639973323705309";
+    document.head.appendChild(sc);
+  }
 
   // ------------------------------------------------------------------ personal download page
   function startGet(ch, name) {
