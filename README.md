@@ -46,3 +46,18 @@ inbox page gives you (or `HelpMe.exe -channel <id>.<key> -helper-name "IT suppor
 The relay can also be self-hosted (`deploy/`).
 
 License: AGPL-3.0
+
+## Code signing policy
+Release binaries are built and tested by GitHub Actions from this repository (`.github/workflows/release.yml`)
+for every version tag; nobody signs a binary built on a personal computer.
+Signing is requested through SignPath Foundation (application pending).
+
+- Committers and approvers: [webgisman](https://github.com/webgisman) (project owner)
+- Every release is reviewed and approved by the owner before signing.
+
+## Privacy
+HelpMe does not collect personal data. It only connects to the relay (`wss://guxos.com/helpme/ws`)
+when the user starts it, to establish the session the user asked for; screen, input and clipboard data
+are end-to-end encrypted and never stored. Help requests (computer name, user name, session code) are
+sent only when the user presses "Request help", encrypted to the helper's public key.
+Web page privacy policy: https://guxos.com/privacy

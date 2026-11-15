@@ -1,0 +1,58 @@
+name: release
+
+# Builds and tests HelpMe on GitHub's runners for every tag v*, and attaches the binaries to the
+# release. Code signing (SignPath Foundation) is enabled once the project is accepted.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test ./...
+      - name: Build
+        shell: bash
+        run: |
+          mkdir -p build
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" -o build/HelpMe.exe ./cmd/helpme
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o build/helpme-relay ./cmd/relay
+      - name: Upload unsigned build
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: HelpMe-unsigned
+          path: build/HelpMe.exe
+
+      # Enabled after acceptance by SignPath Foundation (secrets SIGNPATH_API_TOKEN, SIGNPATH_ORGANIZATION_ID):
+      # - name: Sign
+      #   uses: signpath/github-action-submit-signing-request@v1
+      #   with:
+      #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+      #     organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+      #     project-slug: helpme
+      #     signing-policy-slug: release-signing
+      #     github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      #     wait-for-completion: true
+      #     output-artifact-directory: build/signed
+      # - run: copy build\signed\HelpMe.exe build\HelpMe.exe
+
+      - name: Checksums
+        shell: bash
+        run: cd build && sha256sum HelpMe.exe > HelpMe.exe.sha256
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/HelpMe.exe
+            build/HelpMe.exe.sha256
