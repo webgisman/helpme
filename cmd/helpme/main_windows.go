@@ -30,7 +30,7 @@ import (
 	"github.com/webgisman/helpme/internal/spake2"
 )
 
-const version = "1.2.0"
+const version = "1.2.1"
 
 var (
 	relayURL   = flag.String("relay", "wss://guxos.com/helpme/ws", "relay address")

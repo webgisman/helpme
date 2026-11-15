@@ -29,6 +29,7 @@ import (
 func main() {
 	link := flag.String("link", "", "session link")
 	code := flag.String("code", "", "9-digit short code (instead of -link)")
+	clip := flag.String("clip", "", "text to put on the remote clipboard once the session starts")
 	out := flag.String("out", "screen.png", "output image")
 	frames := flag.Int("frames", 12, "frames to receive")
 	wiggle := flag.Bool("wiggle", false, "move the mouse in a small square at the centre")
@@ -140,6 +141,10 @@ func main() {
 			fmt.Println("status:", string(m[1:]))
 			if strings.Contains(string(m), "accepted") {
 				accepted = time.Now()
+				if *clip != "" {
+					send(append([]byte{proto.MsgClipboard}, *clip...))
+					fmt.Println("sent to the remote clipboard:", *clip)
+				}
 			} else {
 				os.Exit(1)
 			}
@@ -157,6 +162,8 @@ func main() {
 			}
 		case proto.MsgCursor:
 			cursors++
+		case proto.MsgClipboard:
+			fmt.Println("received from the remote clipboard:", string(m[1:]))
 		case proto.MsgFrameEnd:
 			got++
 			send(proto.U32(proto.MsgAck, binary.LittleEndian.Uint32(m[1:])))

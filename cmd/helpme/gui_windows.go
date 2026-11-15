@@ -154,7 +154,11 @@ func newGUI(title string, withRequest bool, labels map[string]string) *gui {
 	binary.LittleEndian.PutUint64(wc[72:], uint64(icon))
 	pRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc[0])))
 
-	const W, H = 460, 470
+	const W = 460
+	H := 400
+	if withRequest {
+		H += 54
+	}
 	sw, sh := screenSize()
 	g.hwnd, _, _ = pCreateWindowExW.Call(0x8 /* topmost */, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(utf16ptr(title))),
 		wsOverlappedFixed|wsVisible, uintptr(sw)-px(W)-px(40), uintptr(sh)-px(H)-px(80), px(W+16), px(H+40), 0, 0, hinst, 0)

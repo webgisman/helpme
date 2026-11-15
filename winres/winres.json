@@ -7,7 +7,7 @@
   "RT_MANIFEST": {
     "#1": {
       "0409": {
-        "identity": {"name": "Guxos.HelpMe", "version": "1.2.0.0"},
+        "identity": {"name": "Guxos.HelpMe", "version": "1.2.1.0"},
         "description": "HelpMe remote help",
         "minimum-os": "win10",
         "execution-level": "as invoker",
@@ -29,17 +29,17 @@
   "RT_VERSION": {
     "#1": {
       "0000": {
-        "fixed": {"file_version": "1.2.0.0", "product_version": "1.2.0.0"},
+        "fixed": {"file_version": "1.2.1.0", "product_version": "1.2.1.0"},
         "info": {
           "0409": {
             "CompanyName": "Guxos",
             "FileDescription": "HelpMe - end-to-end encrypted remote help",
-            "FileVersion": "1.2.0",
+            "FileVersion": "1.2.1",
             "InternalName": "HelpMe",
             "LegalCopyright": "AGPL-3.0 - https://github.com/webgisman/helpme",
             "OriginalFilename": "HelpMe.exe",
             "ProductName": "HelpMe",
-            "ProductVersion": "1.2.0"
+            "ProductVersion": "1.2.1"
           }
         }
       }

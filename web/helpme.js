@@ -13,7 +13,7 @@
       busy: "Someone is already connected to this session.", gone: "The session has ended.", live: "● Connected", badlink: "This link is incomplete or damaged.",
       nocrypto: "Your browser is too old (WebCrypto required). Please update it.", bye: "Session ended.", badcode: "Enter the 9 digits shown in HelpMe.",
       wrongcode: "Wrong code. After 3 wrong attempts the code is changed on their side.", toomany: "Too many attempts. Wait a few minutes.",
-      restarting: "The person's HelpMe is restarting (e.g. as administrator), reconnecting…", display: "Display",
+      restarting: "The person's HelpMe is restarting (e.g. as administrator), reconnecting…", display: "Display", allDisplays: "All displays",
       notadmin: "Windows does not let you control administrator windows. Ask the person to click “Run as administrator” in HelpMe.",
       clipgot: "Their clipboard was copied to yours.", clipready: "Their clipboard is ready: click 📋 to copy it.", pasted: "Pasted on their computer.",
       inboxTitle: function (n) { return "Help requests — " + n; }, online: "● Listening", offline: "Reconnecting…",
@@ -25,7 +25,7 @@
       busy: "Quelqu'un est déjà connecté à cette session.", gone: "La session est terminée.", live: "● Connecté", badlink: "Ce lien est incomplet ou abîmé.",
       nocrypto: "Votre navigateur est trop ancien (WebCrypto nécessaire). Mettez-le à jour.", bye: "Session terminée.", badcode: "Saisissez les 9 chiffres affichés dans HelpMe.",
       wrongcode: "Code incorrect. Après 3 essais faux, le code change de son côté.", toomany: "Trop d'essais. Patientez quelques minutes.",
-      restarting: "HelpMe redémarre chez la personne (par ex. en administrateur), reconnexion…", display: "Écran",
+      restarting: "HelpMe redémarre chez la personne (par ex. en administrateur), reconnexion…", display: "Écran", allDisplays: "Tous les écrans",
       notadmin: "Windows ne vous laisse pas contrôler les fenêtres administrateur. Demandez à la personne de cliquer sur « Relancer en administrateur » dans HelpMe.",
       clipgot: "Son presse-papiers a été copié dans le vôtre.", clipready: "Son presse-papiers est prêt : cliquez sur 📋 pour le copier.", pasted: "Collé sur son ordinateur.",
       inboxTitle: function (n) { return "Demandes d'aide — " + n; }, online: "● À l'écoute", offline: "Reconnexion…",
@@ -322,7 +322,7 @@
       canvas.width = h.w; canvas.height = h.h;
       var sel = $("monsel"), mons = h.monitors || [];
       sel.classList.toggle("hide", mons.length < 2);
-      sel.innerHTML = mons.map(function (mo, i) { return "<option value='" + i + "'" + (i === h.monitor ? " selected" : "") + ">" + esc(T("display")) + " " + (i + 1) + " (" + mo.W + "×" + mo.H + ")</option>"; }).join("");
+      sel.innerHTML = mons.map(function (mo, i) { return "<option value='" + i + "'" + (i === h.monitor ? " selected" : "") + ">" + esc(mo.All ? T("allDisplays") : T("display") + " " + (i + 1)) + " (" + mo.W + "×" + mo.H + ")</option>"; }).join("");
       if (!h.admin) { note(T("notadmin")); setTimeout(function () { if ($("note").textContent === T("notadmin")) note(""); }, 12000); }
       else note("");
     } else if (t === MSG.TILE) {

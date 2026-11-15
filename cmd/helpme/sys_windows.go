@@ -30,6 +30,7 @@ var (
 type monitor struct {
 	X, Y, W, H int
 	Primary    bool
+	All        bool `json:",omitempty"` // the whole virtual desktop (every display side by side)
 }
 
 // monitors lists the displays, primary first.
@@ -52,6 +53,10 @@ func monitors() []monitor {
 	if len(list) == 0 {
 		w, h := screenSize()
 		list = []monitor{{W: w, H: h, Primary: true}}
+	}
+	if len(list) > 1 {
+		x, y, w, h := virtualScreen()
+		list = append(list, monitor{X: x, Y: y, W: w, H: h, All: true})
 	}
 	return list
 }
