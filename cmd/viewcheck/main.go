@@ -74,7 +74,11 @@ func main() {
 		os.Exit(1)
 	}
 	conn.SetReadLimit(16 << 20)
-	send := func(b []byte) { conn.Write(ctx, websocket.MessageBinary, c.Seal(b)) }
+	send := func(b []byte) {
+		if c != nil {
+			conn.Write(ctx, websocket.MessageBinary, c.Seal(b))
+		}
+	}
 	var pendingKey, pendingExpected []byte
 	sendHello := func() {
 		hello, _ := json.Marshal(map[string]string{"name": "Claude (test)"})
