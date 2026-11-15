@@ -1,0 +1,28 @@
+# /opt/helpme sur le serveur de guxos.com (Traefik, réseau n8n_default). Seul /helpme/ws est routé ici ;
+# la page et HelpMe.exe sont des fichiers statiques servis par guxos-web (/opt/guxos/html/helpme/).
+services:
+  helpme-relay:
+    build: .
+    image: helpme-relay:latest
+    container_name: helpme-relay
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    networks: [n8n_default]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.helpme.entrypoints=websecure"
+      - "traefik.http.routers.helpme.rule=Host(`guxos.com`) && PathPrefix(`/helpme/ws`)"
+      - "traefik.http.routers.helpme.priority=1000"
+      - "traefik.http.routers.helpme.tls.certresolver=myresolver"
+      - "traefik.http.services.helpme-service.loadbalancer.server.port=8080"
+
+networks:
+  n8n_default:
+    external: true
